@@ -1,122 +1,149 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { Document, Page } from "react-pdf";
+import ReactMarkdown from "react-markdown";
 
 const API_URL = "http://127.0.0.1:8000";
 
-function App() {
+export default function App() {
   const [message, setMessage] = useState("");
-  const [chat, setChat] = useState([]);
-  const [pdfFile, setPdfFile] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [chats, setChats] = useState({});
+  const [currentChatId, setCurrentChatId] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [webMode, setWebMode] = useState(false);
 
-  const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const chatEndRef = useRef(null);
+
+  // Load chats
+  useEffect(() => {
+    const saved = localStorage.getItem("chats");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      setChats(parsed);
+      const first = Object.keys(parsed)[0];
+      if (first) setCurrentChatId(first);
+    } else {
+      createNewChat();
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("chats", JSON.stringify(chats));
+  }, [chats]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat]);
+  }, [chats, currentChatId]);
 
-  const sendMessage = async () => {
-    if (!message.trim()) return;
-
-    // Add user message
-    setChat(prev => [...prev, { role: "user", text: message }]);
-    setMessage("");
-
-    // Start loading
-    setLoading(true);
-
-    // Add empty AI message
-    setChat(prev => [...prev, { role: "ai", text: "", pages: [] }]);
-
-    try {
-      let res;
-
-      if (message.toLowerCase().includes("pdf")) {
-        res = await axios.post(`${API_URL}/api/ask`, {
-          question: message,
-        });
-
-        updateLast(res.data.answer, res.data.pages);
-      } else {
-        res = await axios.post(`${API_URL}/api/chat`, {
-          message: message,
-        });
-
-        updateLast(res.data.response, []);
-      }
-    } catch (err) {
-      updateLast("⚠️ Something went wrong", []);
-    }
-
-    // Stop loading
-    setLoading(false);
+  // Create chat
+  const createNewChat = () => {
+    const id = Date.now().toString();
+    setChats(prev => ({ ...prev, [id]: [] }));
+    setCurrentChatId(id);
   };
 
-  const updateLast = (text, pages) => {
-    setChat(prev => {
-      const updated = [...prev];
-      updated[updated.length - 1] = {
-        role: "ai",
-        text,
-        pages,
-      };
-      return updated;
-    });
+  // Share chat
+  const shareChat = () => {
+    const chat = chats[currentChatId] || [];
+    const text = chat.map(m => `${m.role}: ${m.text}`).join("\n\n");
+
+    navigator.clipboard.writeText(text);
+    alert("Chat copied! You can share it.");
   };
 
+  // Upload PDF
   const uploadPDF = async (file) => {
-    setPdfFile(URL.createObjectURL(file));
+    if (!file) return;
 
     const formData = new FormData();
     formData.append("file", file);
 
-    await axios.post(`${API_URL}/api/upload`, formData);
+    try {
+      await axios.post(`${API_URL}/api/upload`, formData);
 
-    setChat(prev => [
+      addMessage("ai", "✅ PDF uploaded! Ask with 'pdf'");
+    } catch {
+      addMessage("ai", "❌ Upload failed");
+    }
+  };
+
+  // Add message helper
+  const addMessage = (role, text) => {
+    setChats(prev => ({
       ...prev,
-      {
-        role: "ai",
-        text: "✅ PDF uploaded! Ask using 'pdf'",
-      },
-    ]);
+      [currentChatId]: [
+        ...(prev[currentChatId] || []),
+        { role, text }
+      ]
+    }));
+  };
+
+  // Send message
+  const sendMessage = async () => {
+    if (!message.trim()) return;
+
+    const userText = message;
+    setMessage("");
+
+    addMessage("user", userText);
+    setLoading(true);
+
+    try {
+      let res;
+      let text = "";
+
+      if (webMode) {
+        res = await axios.get(`${API_URL}/api/search?q=${userText}`);
+        text = res.data.answer;
+      } else if (userText.toLowerCase().includes("pdf")) {
+        res = await axios.post(`${API_URL}/api/ask`, {
+          question: userText
+        });
+        text = res.data.answer;
+      } else {
+        res = await axios.post(`${API_URL}/api/chat`, {
+          message: userText
+        });
+        text = res.data.response;
+      }
+
+      addMessage("ai", text);
+
+    } catch {
+      addMessage("ai", "⚠️ Error occurred");
+    }
+
+    setLoading(false);
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        height: "100vh",
-        background: "linear-gradient(135deg,#020617,#0f172a,#020617)",
-        color: "white",
-        fontFamily: "Inter",
-      }}
-    >
+    <div style={{
+      display: "flex",
+      height: "100vh",
+      background: "#0b0f17",
+      color: "white"
+    }}>
+
       {/* SIDEBAR */}
-      <div
-        style={{
-          width: "260px",
-          padding: "20px",
-          borderRight: "1px solid #1e293b",
-        }}
-      >
-        <h2>🤖 AI Assistant</h2>
+      <div style={{
+        width: "260px",
+        borderRight: "1px solid #1f2937",
+        padding: "10px",
+        display: "flex",
+        flexDirection: "column"
+      }}>
+
+        <button onClick={createNewChat} style={btn}>
+          + New Chat
+        </button>
+
+        <button onClick={shareChat} style={btn}>
+          Share Chat
+        </button>
 
         <button
           onClick={() => fileInputRef.current.click()}
-          style={{
-            marginTop: "20px",
-            width: "100%",
-            padding: "12px",
-            borderRadius: "10px",
-            background: "linear-gradient(135deg,#3b82f6,#6366f1)",
-            color: "white",
-            fontWeight: "bold",
-            boxShadow: "0 8px 25px rgba(59,130,246,0.6)",
-            cursor: "pointer",
-          }}
+          style={btn}
         >
           Upload PDF
         </button>
@@ -127,139 +154,118 @@ function App() {
           onChange={(e) => uploadPDF(e.target.files[0])}
           style={{ display: "none" }}
         />
+
+        <hr />
+
+        {/* Chat list */}
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {Object.keys(chats).map(id => (
+            <div key={id}
+              onClick={() => setCurrentChatId(id)}
+              style={{
+                padding: "8px",
+                cursor: "pointer",
+                background: id === currentChatId ? "#1f2937" : "transparent"
+              }}>
+              {(chats[id]?.[0]?.text || "New Chat").slice(0, 20)}
+            </div>
+          ))}
+        </div>
+
+        <label>
+          <input
+            type="checkbox"
+            checked={webMode}
+            onChange={() => setWebMode(!webMode)}
+          /> Web Search
+        </label>
+
       </div>
 
       {/* MAIN */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        {/* HEADER */}
-        <div
-          style={{
-            padding: "20px",
-            borderBottom: "1px solid #1e293b",
-          }}
-        >
-          <h2>AI PDF Chat</h2>
-        </div>
+      <div style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column"
+      }}>
 
-        {/* BODY */}
-        <div style={{ flex: 1, display: "flex" }}>
-          {/* CHAT AREA */}
-          <div
-            style={{
-              flex: 2,
-              padding: "20px",
-              overflowY: "auto",
-            }}
-          >
-            {chat.length === 0 && (
-              <div style={{ textAlign: "center", marginTop: "80px" }}>
-                <h2>🚀 AI PDF Assistant</h2>
-                <p>Upload PDF and ask anything</p>
+        {/* CHAT */}
+        <div style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "30px",
+          maxWidth: "900px",
+          margin: "0 auto"
+        }}>
+
+          {(chats[currentChatId] || []).map((msg, i) => (
+            <div key={i} style={{
+              display: "flex",
+              justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+              marginBottom: "15px"
+            }}>
+              <div style={{
+                maxWidth: "70%",
+                lineHeight: "1.5"
+              }}>
+                <ReactMarkdown>{msg.text}</ReactMarkdown>
               </div>
-            )}
-
-            {chat.map((c, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "flex",
-                  justifyContent:
-                    c.role === "user" ? "flex-end" : "flex-start",
-                  marginBottom: "15px",
-                }}
-              >
-                <div
-                  style={{
-                    padding: "12px",
-                    borderRadius: "10px",
-                    background:
-                      c.role === "user" ? "#2563eb" : "#1e293b",
-                  }}
-                >
-                  {c.text}
-
-                  {c.pages && c.pages.length > 0 && (
-                    <div style={{ fontSize: "12px", marginTop: "5px" }}>
-                      📄 Page:
-                      {c.pages.map((p, i) => (
-                        <span
-                          key={i}
-                          onClick={() => setCurrentPage(p)}
-                          style={{
-                            marginLeft: "5px",
-                            cursor: "pointer",
-                            textDecoration: "underline",
-                          }}
-                        >
-                          {p}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-
-            {/* ✅ LOADING INDICATOR */}
-            {loading && (
-              <p style={{ color: "#94a3b8" }}>AI is typing...</p>
-            )}
-
-            <div ref={chatEndRef}></div>
-          </div>
-
-          {/* PDF VIEWER */}
-          {pdfFile && (
-            <div
-              style={{
-                width: "400px",
-                borderLeft: "1px solid #1e293b",
-                padding: "10px",
-              }}
-            >
-              <Document file={pdfFile}>
-                <Page pageNumber={currentPage} />
-              </Document>
             </div>
-          )}
+          ))}
+
+          {loading && <p>Thinking...</p>}
+
+          <div ref={chatEndRef}></div>
         </div>
 
         {/* INPUT */}
-        <div style={{ display: "flex", padding: "15px" }}>
-          <input
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-            placeholder="Ask something..."
-            style={{
-              flex: 1,
-              padding: "12px",
-              borderRadius: "10px",
-              border: "none",
-              background: "#1e293b",
-              color: "white",
-            }}
-          />
+        <div style={{
+          padding: "15px",
+          borderTop: "1px solid #1f2937"
+        }}>
+          <div style={{
+            display: "flex",
+            maxWidth: "900px",
+            margin: "0 auto",
+            background: "#111827",
+            padding: "10px",
+            borderRadius: "10px"
+          }}>
+            <input
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") sendMessage();
+              }}
+              placeholder="Message AI..."
+              style={{
+                flex: 1,
+                background: "transparent",
+                border: "none",
+                color: "white",
+                outline: "none"
+              }}
+            />
 
-          <button
-            onClick={sendMessage}
-            style={{
+            <button onClick={sendMessage} style={{
               marginLeft: "10px",
-              padding: "12px 18px",
-              background: "#22c55e",
-              border: "none",
-              borderRadius: "10px",
-              color: "white",
-              fontWeight: "bold",
-              cursor: "pointer",
-            }}
-          >
-            Send
-          </button>
+              cursor: "pointer"
+            }}>
+              Send
+            </button>
+          </div>
         </div>
+
       </div>
     </div>
   );
 }
 
-export default App;
+const btn = {
+  marginBottom: "8px",
+  padding: "8px",
+  background: "transparent",
+  border: "1px solid #374151",
+  color: "white",
+  cursor: "pointer"
+};
