@@ -1,10 +1,10 @@
 fastapi
 uvicorn
-groq
-python-dotenv
-pydantic
 python-multipart
+python-dotenv
+groq
 langchain
 langchain-community
-faiss-cpu
+chromadb
+sentence-transformers
 pypdf
