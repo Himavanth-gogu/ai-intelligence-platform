@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 import requests
+import tempfile
 
 from groq import Groq
 
@@ -17,7 +18,7 @@ load_dotenv()
 
 app = FastAPI()
 
-# CORS
+# CORS (Allow all for now)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,7 +30,7 @@ app.add_middleware(
 # Groq setup
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Global vector store
+# Global vector store (temporary memory)
 vector_store = None
 
 
@@ -66,10 +67,10 @@ def upload_pdf(file: UploadFile = File(...)):
     global vector_store
 
     try:
-        file_path = f"temp_{file.filename}"
-
-        with open(file_path, "wb") as f:
-            f.write(file.file.read())
+        # TEMP FILE FIX (important for server)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(file.file.read())
+            file_path = tmp.name
 
         loader = PyPDFLoader(file_path)
         documents = loader.load()
@@ -136,7 +137,7 @@ Question: {data.question}
         return {"error": str(e)}
 
 
-# ---------------- WEB SEARCH (Perplexity Style) ----------------
+# ---------------- WEB SEARCH ----------------
 @app.get("/api/search")
 def web_search(q: str = Query(...)):
     try:
