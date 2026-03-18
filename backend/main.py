@@ -7,18 +7,15 @@ import requests
 import tempfile
 
 from groq import Groq
-
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # Load env
 load_dotenv()
 
 app = FastAPI()
 
-# CORS (Allow all for now)
+# CORS (Allow all)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,8 +27,8 @@ app.add_middleware(
 # Groq setup
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Global vector store (temporary memory)
-vector_store = None
+# Temporary storage (lightweight)
+pdf_chunks = []
 
 
 # ---------------- TEST ----------------
@@ -64,10 +61,10 @@ def chat(data: ChatRequest):
 # ---------------- PDF UPLOAD ----------------
 @app.post("/api/upload")
 def upload_pdf(file: UploadFile = File(...)):
-    global vector_store
+    global pdf_chunks
 
     try:
-        # TEMP FILE FIX (important for server)
+        # Save temp file (important for server)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(file.file.read())
             file_path = tmp.name
@@ -80,13 +77,7 @@ def upload_pdf(file: UploadFile = File(...)):
             chunk_overlap=50
         )
 
-        docs = splitter.split_documents(documents)
-
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-
-        vector_store = Chroma.from_documents(docs, embeddings)
+        pdf_chunks = splitter.split_documents(documents)
 
         return {"message": "PDF processed successfully"}
 
@@ -101,13 +92,14 @@ class PDFQuestion(BaseModel):
 
 @app.post("/api/ask")
 def ask_pdf(data: PDFQuestion):
-    global vector_store
+    global pdf_chunks
 
     try:
-        if vector_store is None:
+        if not pdf_chunks:
             return {"answer": "Upload PDF first", "pages": []}
 
-        docs = vector_store.similarity_search(data.question, k=3)
+        # Take first few chunks (lightweight)
+        docs = pdf_chunks[:3]
 
         context = "\n".join([doc.page_content for doc in docs])
 
