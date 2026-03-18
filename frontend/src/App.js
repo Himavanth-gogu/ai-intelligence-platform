@@ -54,6 +54,7 @@ export default function App() {
     }));
   };
 
+  // PDF upload
   const uploadPDF = async (file) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -63,9 +64,10 @@ export default function App() {
       body: formData
     });
 
-    addMessage("ai", "✅ PDF uploaded.", currentChatId);
+    addMessage("ai", "✅ PDF uploaded successfully.", currentChatId);
   };
 
+  // Send message
   const sendMessage = async () => {
     if (!message.trim()) return;
 
@@ -116,7 +118,7 @@ export default function App() {
       }
 
     } catch {
-      addMessage("ai", "⚠️ Error", chatId);
+      addMessage("ai", "⚠️ Error occurred.", chatId);
     }
   };
 
@@ -125,10 +127,16 @@ export default function App() {
   return (
     <div style={styles.app}>
 
+      {/* SIDEBAR */}
       <div style={styles.sidebar}>
-        <button onClick={createNewChat}>+ New Chat</button>
+        <button style={styles.btn} onClick={createNewChat}>
+          + New Chat
+        </button>
 
-        <button onClick={() => fileInputRef.current.click()}>
+        <button
+          style={styles.btn}
+          onClick={() => fileInputRef.current.click()}
+        >
           Upload PDF
         </button>
 
@@ -139,23 +147,49 @@ export default function App() {
           onChange={(e) => uploadPDF(e.target.files[0])}
         />
 
-        {Object.keys(chats).map(id => (
-          <div key={id} style={styles.row}>
-            <div onClick={() => setCurrentChatId(id)} style={styles.chatItem}>
-              {(chats[id]?.[0]?.text || "New Chat").slice(0, 20)}
+        <div style={styles.history}>
+          {Object.keys(chats).map(id => (
+            <div key={id} style={styles.historyRow}>
+              <div
+                onClick={() => setCurrentChatId(id)}
+                style={{
+                  ...styles.historyItem,
+                  background: id === currentChatId ? "#1a1a1a" : "transparent"
+                }}
+              >
+                {(chats[id]?.[0]?.text || "New Chat").slice(0, 25)}
+              </div>
+
+              <button
+                onClick={() => deleteChat(id)}
+                style={styles.deleteBtn}
+              >
+                ✕
+              </button>
             </div>
-            <button onClick={() => deleteChat(id)}>✕</button>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
+      {/* MAIN */}
       <div style={styles.main}>
-        <div style={styles.chat}>
+
+        {/* HEADER */}
+        <div style={styles.header}>
+          AI Intelligence Platform
+        </div>
+
+        {/* CHAT */}
+        <div style={styles.chatArea}>
           {currentChat.map((msg, i) => (
-            <div key={i} style={{
-              display: "flex",
-              justifyContent: msg.role === "user" ? "flex-end" : "flex-start"
-            }}>
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                justifyContent:
+                  msg.role === "user" ? "flex-end" : "flex-start"
+              }}
+            >
               <div style={styles.bubble}>
                 <ReactMarkdown>{msg.text}</ReactMarkdown>
               </div>
@@ -164,27 +198,132 @@ export default function App() {
           <div ref={chatEndRef}></div>
         </div>
 
-        <div style={styles.inputBox}>
-          <input
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-            placeholder="Message AI..."
-          />
-          <button onClick={sendMessage}>➤</button>
+        {/* INPUT */}
+        <div style={styles.inputWrapper}>
+          <div style={styles.inputBox}>
+            <input
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Message AI..."
+              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+              style={styles.input}
+            />
+            <button onClick={sendMessage} style={styles.send}>
+              ➤
+            </button>
+          </div>
         </div>
+
       </div>
     </div>
   );
 }
 
 const styles = {
-  app: { display: "flex", height: "100vh", background: "#0d0d0d", color: "#fff" },
-  sidebar: { width: "240px", padding: "10px" },
-  row: { display: "flex", justifyContent: "space-between" },
-  chatItem: { cursor: "pointer" },
-  main: { flex: 1, display: "flex", flexDirection: "column" },
-  chat: { flex: 1, padding: "20px", overflowY: "auto" },
-  bubble: { background: "#1a1a1a", padding: "10px", borderRadius: "10px", margin: "10px", maxWidth: "60%" },
-  inputBox: { display: "flex", padding: "10px", background: "#1a1a1a" }
+  app: {
+    display: "flex",
+    height: "100vh",
+    background: "#0d0d0d",
+    color: "#e5e5e5"
+  },
+
+  sidebar: {
+    width: "240px",
+    borderRight: "1px solid #222",
+    padding: "12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px"
+  },
+
+  btn: {
+    padding: "10px",
+    background: "#1a1a1a",
+    border: "none",
+    color: "#fff",
+    cursor: "pointer",
+    borderRadius: "6px"
+  },
+
+  history: {
+    marginTop: "10px",
+    overflowY: "auto"
+  },
+
+  historyRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+
+  historyItem: {
+    padding: "8px",
+    cursor: "pointer",
+    borderRadius: "6px",
+    flex: 1
+  },
+
+  deleteBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#777",
+    cursor: "pointer"
+  },
+
+  main: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column"
+  },
+
+  header: {
+    padding: "12px",
+    borderBottom: "1px solid #222"
+  },
+
+  chatArea: {
+    flex: 1,
+    padding: "30px",
+    maxWidth: "900px",
+    margin: "0 auto",
+    width: "100%",
+    overflowY: "auto"
+  },
+
+  bubble: {
+    background: "#1a1a1a",
+    borderRadius: "14px",
+    padding: "12px 16px",
+    marginBottom: "14px",
+    maxWidth: "60%"
+  },
+
+  inputWrapper: {
+    padding: "16px",
+    borderTop: "1px solid #222"
+  },
+
+  inputBox: {
+    display: "flex",
+    maxWidth: "900px",
+    margin: "0 auto",
+    background: "#1a1a1a",
+    borderRadius: "12px",
+    padding: "10px"
+  },
+
+  input: {
+    flex: 1,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#fff"
+  },
+
+  send: {
+    border: "none",
+    background: "transparent",
+    color: "#aaa",
+    cursor: "pointer"
+  }
 };
