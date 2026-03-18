@@ -11,7 +11,6 @@ export default function App() {
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
 
-  // Load chats
   useEffect(() => {
     const saved = JSON.parse(localStorage.getItem("chats") || "{}");
     if (Object.keys(saved).length) {
@@ -36,48 +35,53 @@ export default function App() {
     setCurrentChatId(id);
   };
 
-  const addMessage = (role, text) => {
+  const deleteChat = (id) => {
+    const updated = { ...chats };
+    delete updated[id];
+    setChats(updated);
+
+    const remaining = Object.keys(updated);
+    setCurrentChatId(remaining[0] || null);
+  };
+
+  const addMessage = (role, text, chatId) => {
     setChats(prev => ({
       ...prev,
-      [currentChatId]: [
-        ...(prev[currentChatId] || []),
+      [chatId]: [
+        ...(prev[chatId] || []),
         { role, text }
       ]
     }));
   };
 
-  // 🔥 PDF Upload
   const uploadPDF = async (file) => {
     const formData = new FormData();
     formData.append("file", file);
 
-    try {
-      await fetch(`${API_URL}/api/upload`, {
-        method: "POST",
-        body: formData
-      });
+    await fetch(`${API_URL}/api/upload`, {
+      method: "POST",
+      body: formData
+    });
 
-      addMessage("ai", "✅ PDF uploaded. You can now ask questions.");
-    } catch {
-      addMessage("ai", "❌ PDF upload failed.");
-    }
+    addMessage("ai", "✅ PDF uploaded.", currentChatId);
   };
 
-  // 🔥 Streaming Chat
   const sendMessage = async () => {
     if (!message.trim()) return;
+
+    let chatId = currentChatId;
+
+    if (!chatId) {
+      chatId = Date.now().toString();
+      setCurrentChatId(chatId);
+      setChats(prev => ({ ...prev, [chatId]: [] }));
+    }
 
     const userText = message;
     setMessage("");
 
-    addMessage("user", userText);
-
-    // empty AI message
-    setChats(prev => {
-      const updated = { ...prev };
-      updated[currentChatId].push({ role: "ai", text: "" });
-      return updated;
-    });
+    addMessage("user", userText, chatId);
+    addMessage("ai", "", chatId);
 
     try {
       const res = await fetch(`${API_URL}/api/chat-stream`, {
@@ -87,7 +91,7 @@ export default function App() {
         },
         body: JSON.stringify({
           message: userText,
-          session_id: currentChatId
+          session_id: chatId
         })
       });
 
@@ -104,15 +108,15 @@ export default function App() {
 
         setChats(prev => {
           const updated = { ...prev };
-          const msgs = [...updated[currentChatId]];
+          const msgs = [...updated[chatId]];
           msgs[msgs.length - 1].text += chunk;
-          updated[currentChatId] = msgs;
+          updated[chatId] = msgs;
           return updated;
         });
       }
 
     } catch {
-      addMessage("ai", "⚠️ Server error.");
+      addMessage("ai", "⚠️ Error", chatId);
     }
   };
 
@@ -121,7 +125,6 @@ export default function App() {
   return (
     <div style={styles.app}>
 
-      {/* SIDEBAR */}
       <div style={styles.sidebar}>
         <button onClick={createNewChat}>+ New Chat</button>
 
@@ -136,40 +139,23 @@ export default function App() {
           onChange={(e) => uploadPDF(e.target.files[0])}
         />
 
-        <div style={styles.history}>
-          {Object.keys(chats).map(id => (
-            <div
-              key={id}
-              onClick={() => setCurrentChatId(id)}
-              style={{
-                ...styles.historyItem,
-                background: id === currentChatId ? "#1a1a1a" : "transparent"
-              }}
-            >
-              {(chats[id]?.[0]?.text || "New Chat").slice(0, 25)}
+        {Object.keys(chats).map(id => (
+          <div key={id} style={styles.row}>
+            <div onClick={() => setCurrentChatId(id)} style={styles.chatItem}>
+              {(chats[id]?.[0]?.text || "New Chat").slice(0, 20)}
             </div>
-          ))}
-        </div>
+            <button onClick={() => deleteChat(id)}>✕</button>
+          </div>
+        ))}
       </div>
 
-      {/* MAIN */}
       <div style={styles.main}>
-
-        <div style={styles.header}>
-          AI Intelligence Platform
-        </div>
-
-        {/* CHAT AREA */}
-        <div style={styles.chatArea}>
+        <div style={styles.chat}>
           {currentChat.map((msg, i) => (
-            <div
-              key={i}
-              style={{
-                display: "flex",
-                justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-                marginBottom: "14px"
-              }}
-            >
+            <div key={i} style={{
+              display: "flex",
+              justifyContent: msg.role === "user" ? "flex-end" : "flex-start"
+            }}>
               <div style={styles.bubble}>
                 <ReactMarkdown>{msg.text}</ReactMarkdown>
               </div>
@@ -178,110 +164,27 @@ export default function App() {
           <div ref={chatEndRef}></div>
         </div>
 
-        {/* INPUT */}
-        <div style={styles.inputWrapper}>
-          <div style={styles.inputBox}>
-            <input
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Message AI..."
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              style={styles.input}
-            />
-            <button onClick={sendMessage} style={styles.send}>
-              ➤
-            </button>
-          </div>
+        <div style={styles.inputBox}>
+          <input
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+            placeholder="Message AI..."
+          />
+          <button onClick={sendMessage}>➤</button>
         </div>
-
       </div>
     </div>
   );
 }
 
 const styles = {
-  app: {
-    display: "flex",
-    height: "100vh",
-    background: "#0d0d0d",
-    color: "#e5e5e5",
-    fontFamily: "system-ui"
-  },
-
-  sidebar: {
-    width: "240px",
-    borderRight: "1px solid #222",
-    padding: "10px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px"
-  },
-
-  history: {
-    marginTop: "10px",
-    overflowY: "auto",
-    flex: 1
-  },
-
-  historyItem: {
-    padding: "8px",
-    borderRadius: "6px",
-    cursor: "pointer"
-  },
-
-  main: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column"
-  },
-
-  header: {
-    padding: "12px",
-    borderBottom: "1px solid #222"
-  },
-
-  chatArea: {
-    flex: 1,
-    padding: "30px",
-    maxWidth: "900px",
-    margin: "0 auto",
-    width: "100%",
-    overflowY: "auto"
-  },
-
-  bubble: {
-    background: "#1a1a1a",
-    borderRadius: "14px",
-    padding: "12px 16px",
-    maxWidth: "60%"
-  },
-
-  inputWrapper: {
-    padding: "16px",
-    borderTop: "1px solid #222"
-  },
-
-  inputBox: {
-    display: "flex",
-    maxWidth: "900px",
-    margin: "0 auto",
-    borderRadius: "12px",
-    background: "#1a1a1a",
-    padding: "10px"
-  },
-
-  input: {
-    flex: 1,
-    border: "none",
-    outline: "none",
-    background: "transparent",
-    color: "#fff"
-  },
-
-  send: {
-    border: "none",
-    background: "transparent",
-    color: "#aaa",
-    cursor: "pointer"
-  }
+  app: { display: "flex", height: "100vh", background: "#0d0d0d", color: "#fff" },
+  sidebar: { width: "240px", padding: "10px" },
+  row: { display: "flex", justifyContent: "space-between" },
+  chatItem: { cursor: "pointer" },
+  main: { flex: 1, display: "flex", flexDirection: "column" },
+  chat: { flex: 1, padding: "20px", overflowY: "auto" },
+  bubble: { background: "#1a1a1a", padding: "10px", borderRadius: "10px", margin: "10px", maxWidth: "60%" },
+  inputBox: { display: "flex", padding: "10px", background: "#1a1a1a" }
 };
