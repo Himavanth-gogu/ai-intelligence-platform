@@ -116,7 +116,7 @@ Question: {data.message}
     async def generate():
         try:
             completion = groq_client.chat.completions.create(
-                model="llama-3.1-70b-instruct",
+                model="llama-3.1-8b-instant",
                 messages=chat_memory[session_id],
                 stream=True
             )
