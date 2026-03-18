@@ -3,7 +3,4 @@ uvicorn
 python-dotenv
 python-multipart
 groq
-langchain
-langchain-community
 pypdf
-requests

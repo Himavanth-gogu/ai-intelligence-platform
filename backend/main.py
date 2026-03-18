@@ -1,21 +1,20 @@
-from fastapi import FastAPI, UploadFile, File, Query
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
-import requests
+import asyncio
 import tempfile
 
 from groq import Groq
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pypdf import PdfReader
 
-# Load env
 load_dotenv()
 
 app = FastAPI()
 
-# CORS (Allow all)
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,60 +23,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Groq setup
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Temporary storage (lightweight)
-pdf_chunks = []
+# Memory
+chat_memory = {}
+
+# PDF storage
+pdf_text_chunks = []
 
 
-# ---------------- TEST ----------------
-@app.get("/api/test")
-def test():
-    return {"message": "Backend is working 🚀"}
-
-
-# ---------------- NORMAL CHAT ----------------
 class ChatRequest(BaseModel):
     message: str
+    session_id: str
 
 
-@app.post("/api/chat")
-def chat(data: ChatRequest):
-    try:
-        completion = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": data.message}]
-        )
-
-        return {
-            "response": completion.choices[0].message.content
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
+@app.get("/api/test")
+def test():
+    return {"message": "Backend working 🚀"}
 
 
 # ---------------- PDF UPLOAD ----------------
 @app.post("/api/upload")
-def upload_pdf(file: UploadFile = File(...)):
-    global pdf_chunks
+async def upload_pdf(file: UploadFile = File(...)):
+    global pdf_text_chunks
 
     try:
-        # Save temp file (important for server)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(file.file.read())
             file_path = tmp.name
 
-        loader = PyPDFLoader(file_path)
-        documents = loader.load()
+        reader = PdfReader(file_path)
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50
-        )
+        full_text = ""
+        for page in reader.pages:
+            full_text += page.extract_text() or ""
 
-        pdf_chunks = splitter.split_documents(documents)
+        # 🔥 simple chunking
+        chunk_size = 500
+        pdf_text_chunks = [
+            full_text[i:i + chunk_size]
+            for i in range(0, len(full_text), chunk_size)
+        ]
 
         return {"message": "PDF processed successfully"}
 
@@ -85,71 +71,71 @@ def upload_pdf(file: UploadFile = File(...)):
         return {"error": str(e)}
 
 
-# ---------------- ASK PDF ----------------
-class PDFQuestion(BaseModel):
-    question: str
+# ---------------- STREAM CHAT ----------------
+@app.post("/api/chat-stream")
+async def chat_stream(data: ChatRequest):
 
+    session_id = data.session_id
 
-@app.post("/api/ask")
-def ask_pdf(data: PDFQuestion):
-    global pdf_chunks
+    if session_id not in chat_memory:
+        chat_memory[session_id] = [
+            {
+                "role": "system",
+                "content": "You are a helpful AI assistant."
+            }
+        ]
 
-    try:
-        if not pdf_chunks:
-            return {"answer": "Upload PDF first", "pages": []}
+    user_msg = data.message.lower()
 
-        # Take first few chunks (lightweight)
-        docs = pdf_chunks[:3]
+    # 🔥 PDF SEARCH (FAST)
+    context = ""
+    if pdf_text_chunks:
+        matched_chunks = [
+            chunk for chunk in pdf_text_chunks
+            if any(word in chunk.lower() for word in user_msg.split())
+        ][:3]
 
-        context = "\n".join([doc.page_content for doc in docs])
+        context = "\n".join(matched_chunks)
 
-        pages = list(set([
-            doc.metadata.get("page", 0) + 1 for doc in docs
-        ]))
-
-        prompt = f"""
-Answer using the context below:
+    if context:
+        final_prompt = f"""
+Use the below PDF content to answer:
 
 {context}
 
-Question: {data.question}
+Question: {data.message}
 """
+    else:
+        final_prompt = data.message
 
-        completion = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": prompt}]
-        )
+    chat_memory[session_id].append({
+        "role": "user",
+        "content": final_prompt
+    })
 
-        return {
-            "answer": completion.choices[0].message.content,
-            "pages": pages
-        }
+    async def generate():
+        try:
+            completion = groq_client.chat.completions.create(
+                model="llama-3.1-70b-versatile",
+                messages=chat_memory[session_id],
+                stream=True
+            )
 
-    except Exception as e:
-        return {"error": str(e)}
+            full_response = ""
 
+            for chunk in completion:
+                content = chunk.choices[0].delta.content or ""
+                if content:
+                    full_response += content
+                    yield content
+                    await asyncio.sleep(0.01)
 
-# ---------------- WEB SEARCH ----------------
-@app.get("/api/search")
-def web_search(q: str = Query(...)):
-    try:
-        url = f"https://api.duckduckgo.com/?q={q}&format=json"
-        res = requests.get(url).json()
+            chat_memory[session_id].append({
+                "role": "assistant",
+                "content": full_response
+            })
 
-        answer = res.get("AbstractText", "")
-        source = res.get("AbstractURL", "")
+        except Exception as e:
+            yield f"Error: {str(e)}"
 
-        if not answer:
-            answer = "No direct answer found. Try refining your query."
-
-        return {
-            "answer": answer,
-            "sources": [source] if source else []
-        }
-
-    except Exception as e:
-        return {
-            "answer": "Search failed",
-            "sources": [],
-            "error": str(e)
-        }
+    return StreamingResponse(generate(), media_type="text/plain")

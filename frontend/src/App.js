@@ -1,27 +1,22 @@
 import { useState, useEffect, useRef } from "react";
-import axios from "axios";
 import ReactMarkdown from "react-markdown";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = "https://ai-intelligence-platform-4.onrender.com";
 
 export default function App() {
   const [message, setMessage] = useState("");
   const [chats, setChats] = useState({});
   const [currentChatId, setCurrentChatId] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [webMode, setWebMode] = useState(false);
 
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
 
   // Load chats
   useEffect(() => {
-    const saved = localStorage.getItem("chats");
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      setChats(parsed);
-      const first = Object.keys(parsed)[0];
-      if (first) setCurrentChatId(first);
+    const saved = JSON.parse(localStorage.getItem("chats") || "{}");
+    if (Object.keys(saved).length) {
+      setChats(saved);
+      setCurrentChatId(Object.keys(saved)[0]);
     } else {
       createNewChat();
     }
@@ -33,41 +28,14 @@ export default function App() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chats, currentChatId]);
+  }, [chats]);
 
-  // Create chat
   const createNewChat = () => {
     const id = Date.now().toString();
     setChats(prev => ({ ...prev, [id]: [] }));
     setCurrentChatId(id);
   };
 
-  // Share chat
-  const shareChat = () => {
-    const chat = chats[currentChatId] || [];
-    const text = chat.map(m => `${m.role}: ${m.text}`).join("\n\n");
-
-    navigator.clipboard.writeText(text);
-    alert("Chat copied! You can share it.");
-  };
-
-  // Upload PDF
-  const uploadPDF = async (file) => {
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      await axios.post(`${API_URL}/api/upload`, formData);
-
-      addMessage("ai", "✅ PDF uploaded! Ask with 'pdf'");
-    } catch {
-      addMessage("ai", "❌ Upload failed");
-    }
-  };
-
-  // Add message helper
   const addMessage = (role, text) => {
     setChats(prev => ({
       ...prev,
@@ -78,7 +46,24 @@ export default function App() {
     }));
   };
 
-  // Send message
+  // 🔥 PDF Upload
+  const uploadPDF = async (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      await fetch(`${API_URL}/api/upload`, {
+        method: "POST",
+        body: formData
+      });
+
+      addMessage("ai", "✅ PDF uploaded. You can now ask questions.");
+    } catch {
+      addMessage("ai", "❌ PDF upload failed.");
+    }
+  };
+
+  // 🔥 Streaming Chat
   const sendMessage = async () => {
     if (!message.trim()) return;
 
@@ -86,172 +71,125 @@ export default function App() {
     setMessage("");
 
     addMessage("user", userText);
-    setLoading(true);
+
+    // empty AI message
+    setChats(prev => {
+      const updated = { ...prev };
+      updated[currentChatId].push({ role: "ai", text: "" });
+      return updated;
+    });
 
     try {
-      let res;
-      let text = "";
+      const res = await fetch(`${API_URL}/api/chat-stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message: userText,
+          session_id: currentChatId
+        })
+      });
 
-      if (webMode) {
-        res = await axios.get(`${API_URL}/api/search?q=${userText}`);
-        text = res.data.answer;
-      } else if (userText.toLowerCase().includes("pdf")) {
-        res = await axios.post(`${API_URL}/api/ask`, {
-          question: userText
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      let done = false;
+
+      while (!done) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
+
+        const chunk = decoder.decode(value || new Uint8Array());
+
+        setChats(prev => {
+          const updated = { ...prev };
+          const msgs = [...updated[currentChatId]];
+          msgs[msgs.length - 1].text += chunk;
+          updated[currentChatId] = msgs;
+          return updated;
         });
-        text = res.data.answer;
-      } else {
-        res = await axios.post(`${API_URL}/api/chat`, {
-          message: userText
-        });
-        text = res.data.response;
       }
 
-      addMessage("ai", text);
-
     } catch {
-      addMessage("ai", "⚠️ Error occurred");
+      addMessage("ai", "⚠️ Server error.");
     }
-
-    setLoading(false);
   };
 
+  const currentChat = chats[currentChatId] || [];
+
   return (
-    <div style={{
-      display: "flex",
-      height: "100vh",
-      background: "#0b0f17",
-      color: "white"
-    }}>
+    <div style={styles.app}>
 
       {/* SIDEBAR */}
-      <div style={{
-        width: "260px",
-        borderRight: "1px solid #1f2937",
-        padding: "10px",
-        display: "flex",
-        flexDirection: "column"
-      }}>
+      <div style={styles.sidebar}>
+        <button onClick={createNewChat}>+ New Chat</button>
 
-        <button onClick={createNewChat} style={btn}>
-          + New Chat
-        </button>
-
-        <button onClick={shareChat} style={btn}>
-          Share Chat
-        </button>
-
-        <button
-          onClick={() => fileInputRef.current.click()}
-          style={btn}
-        >
+        <button onClick={() => fileInputRef.current.click()}>
           Upload PDF
         </button>
 
         <input
           type="file"
           ref={fileInputRef}
-          onChange={(e) => uploadPDF(e.target.files[0])}
           style={{ display: "none" }}
+          onChange={(e) => uploadPDF(e.target.files[0])}
         />
 
-        <hr />
-
-        {/* Chat list */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
+        <div style={styles.history}>
           {Object.keys(chats).map(id => (
-            <div key={id}
+            <div
+              key={id}
               onClick={() => setCurrentChatId(id)}
               style={{
-                padding: "8px",
-                cursor: "pointer",
-                background: id === currentChatId ? "#1f2937" : "transparent"
-              }}>
-              {(chats[id]?.[0]?.text || "New Chat").slice(0, 20)}
+                ...styles.historyItem,
+                background: id === currentChatId ? "#1a1a1a" : "transparent"
+              }}
+            >
+              {(chats[id]?.[0]?.text || "New Chat").slice(0, 25)}
             </div>
           ))}
         </div>
-
-        <label>
-          <input
-            type="checkbox"
-            checked={webMode}
-            onChange={() => setWebMode(!webMode)}
-          /> Web Search
-        </label>
-
       </div>
 
       {/* MAIN */}
-      <div style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column"
-      }}>
+      <div style={styles.main}>
 
-        {/* CHAT */}
-        <div style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "30px",
-          maxWidth: "900px",
-          margin: "0 auto"
-        }}>
+        <div style={styles.header}>
+          AI Intelligence Platform
+        </div>
 
-          {(chats[currentChatId] || []).map((msg, i) => (
-            <div key={i} style={{
-              display: "flex",
-              justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-              marginBottom: "15px"
-            }}>
-              <div style={{
-                maxWidth: "70%",
-                lineHeight: "1.5"
-              }}>
+        {/* CHAT AREA */}
+        <div style={styles.chatArea}>
+          {currentChat.map((msg, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+                marginBottom: "14px"
+              }}
+            >
+              <div style={styles.bubble}>
                 <ReactMarkdown>{msg.text}</ReactMarkdown>
               </div>
             </div>
           ))}
-
-          {loading && <p>Thinking...</p>}
-
           <div ref={chatEndRef}></div>
         </div>
 
         {/* INPUT */}
-        <div style={{
-          padding: "15px",
-          borderTop: "1px solid #1f2937"
-        }}>
-          <div style={{
-            display: "flex",
-            maxWidth: "900px",
-            margin: "0 auto",
-            background: "#111827",
-            padding: "10px",
-            borderRadius: "10px"
-          }}>
+        <div style={styles.inputWrapper}>
+          <div style={styles.inputBox}>
             <input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") sendMessage();
-              }}
               placeholder="Message AI..."
-              style={{
-                flex: 1,
-                background: "transparent",
-                border: "none",
-                color: "white",
-                outline: "none"
-              }}
+              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+              style={styles.input}
             />
-
-            <button onClick={sendMessage} style={{
-              marginLeft: "10px",
-              cursor: "pointer"
-            }}>
-              Send
+            <button onClick={sendMessage} style={styles.send}>
+              ➤
             </button>
           </div>
         </div>
@@ -261,11 +199,89 @@ export default function App() {
   );
 }
 
-const btn = {
-  marginBottom: "8px",
-  padding: "8px",
-  background: "transparent",
-  border: "1px solid #374151",
-  color: "white",
-  cursor: "pointer"
+const styles = {
+  app: {
+    display: "flex",
+    height: "100vh",
+    background: "#0d0d0d",
+    color: "#e5e5e5",
+    fontFamily: "system-ui"
+  },
+
+  sidebar: {
+    width: "240px",
+    borderRight: "1px solid #222",
+    padding: "10px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px"
+  },
+
+  history: {
+    marginTop: "10px",
+    overflowY: "auto",
+    flex: 1
+  },
+
+  historyItem: {
+    padding: "8px",
+    borderRadius: "6px",
+    cursor: "pointer"
+  },
+
+  main: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column"
+  },
+
+  header: {
+    padding: "12px",
+    borderBottom: "1px solid #222"
+  },
+
+  chatArea: {
+    flex: 1,
+    padding: "30px",
+    maxWidth: "900px",
+    margin: "0 auto",
+    width: "100%",
+    overflowY: "auto"
+  },
+
+  bubble: {
+    background: "#1a1a1a",
+    borderRadius: "14px",
+    padding: "12px 16px",
+    maxWidth: "60%"
+  },
+
+  inputWrapper: {
+    padding: "16px",
+    borderTop: "1px solid #222"
+  },
+
+  inputBox: {
+    display: "flex",
+    maxWidth: "900px",
+    margin: "0 auto",
+    borderRadius: "12px",
+    background: "#1a1a1a",
+    padding: "10px"
+  },
+
+  input: {
+    flex: 1,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#fff"
+  },
+
+  send: {
+    border: "none",
+    background: "transparent",
+    color: "#aaa",
+    cursor: "pointer"
+  }
 };
